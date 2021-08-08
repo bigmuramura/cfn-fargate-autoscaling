@@ -135,6 +135,7 @@ Resources:
     Type: "AWS::Logs::LogGroup"
     Properties:
       LogGroupName: !Sub "/ecs/logs/${ProjectName}-${Environment}-firelens-logrouter"
+      RetentionInDays: 400
 
   # --------------------------------------------
   # ECS Fargate
@@ -338,7 +339,7 @@ Resources:
   ServiceScaleOutPolicy:
     Type: AWS::ApplicationAutoScaling::ScalingPolicy
     Properties:
-      PolicyName: !Sub "${ECSService}-ScaleOutPolicy"
+      PolicyName: !Sub "${ProjectName}-${Environment}-${ServiceName}-ScaleOutPolicy"
       PolicyType: StepScaling
       ScalingTargetId: !Ref ServiceScalingTarget
       StepScalingPolicyConfiguration:
@@ -352,7 +353,7 @@ Resources:
   ServiceScaleInPolicy:
     Type: AWS::ApplicationAutoScaling::ScalingPolicy
     Properties:
-      PolicyName: !Sub "${ECSService}-ScaleInPolicy"
+      PolicyName: !Sub "${ProjectName}-${Environment}-${ServiceName}-ScaleInPolicy"
       PolicyType: StepScaling
       ScalingTargetId: !Ref ServiceScalingTarget
       StepScalingPolicyConfiguration:
@@ -367,7 +368,7 @@ Resources:
   ServiceScaleOutAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub "${ECSService}-ScaleOutAlarm"
+      AlarmName: !Sub "${ProjectName}-${Environment}-${ServiceName}-ScaleOutAlarm"
       EvaluationPeriods: 1
       Statistic: Average
       TreatMissingData: notBreaching
@@ -381,14 +382,14 @@ Resources:
         - Name: ClusterName
           Value: !Ref ECSCluster
         - Name: ServiceName
-          Value: !Ref ECSService
+          Value: !Sub "${ProjectName}-${Environment}-${ServiceName}"
       ComparisonOperator: GreaterThanThreshold
       MetricName: CPUUtilization
 
   ServiceScaleInAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub "${ECSService}-ScaleInAlarm"
+      AlarmName: !Sub "${ProjectName}-${Environment}-${ServiceName}-ScaleInAlarm"
       EvaluationPeriods: 1
       Statistic: Average
       TreatMissingData: notBreaching
@@ -402,6 +403,6 @@ Resources:
         - Name: ClusterName
           Value: !Ref ECSCluster
         - Name: ServiceName
-          Value: !Sub "${ECSService}"
+          Value: !Sub "${ProjectName}-${Environment}-${ServiceName}"
       ComparisonOperator: LessThanThreshold
       MetricName: CPUUtilization
