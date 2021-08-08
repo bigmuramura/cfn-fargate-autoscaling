@@ -134,7 +134,7 @@ Resources:
   FireLensLogGroup:
     Type: "AWS::Logs::LogGroup"
     Properties:
-      LogGroupName: !Sub "/ecs/logs/${ProjectName}-${Environment}-firelens"
+      LogGroupName: !Sub "/ecs/logs/${ProjectName}-${Environment}-firelens-logrouter"
 
   # --------------------------------------------
   # ECS Fargate
@@ -144,6 +144,9 @@ Resources:
     Type: "AWS::ECS::Cluster"
     Properties:
       ClusterName: !Sub "${ProjectName}-${Environment}-${ClusterName}"
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
       CapacityProviders:
         - "FARGATE_SPOT"
         - "FARGATE"
@@ -208,21 +211,6 @@ Resources:
               config-file-type: "file"
               config-file-value: "/fluent-bit/etc/extra.conf"
           User: "0"
-  # ECS Auto Scaling
-  ServiceScalingTarget:
-    Type: AWS::ApplicationAutoScaling::ScalableTarget
-    Properties:
-      MinCapacity: 2
-      MaxCapacity: 4
-      ResourceId: !Sub
-        - service/${EcsClusterName}/${EcsDefaultServiceName}
-        - EcsClusterName: !Ref ECSCluster
-          EcsDefaultServiceName: !Sub "${ProjectName}-${Environment}-${ServiceName}"
-      RoleARN: !GetAtt ServiceAutoScalingRole.Arn
-      ScalableDimension: ecs:service:DesiredCount
-      ServiceNamespace: ecs
-    # DependsOn:
-    #   - ECSService
 
   # --------------------------------------------
   # Security Group
@@ -294,29 +282,6 @@ Resources:
       ManagedPolicyArns:
         - !Ref ECSExecPolicy
         - !Ref SentCloudWatchLogsPolicy
-  # ECS Auto Scaling Role
-  ServiceAutoScalingRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: application-autoscaling.amazonaws.com
-            Action: sts:AssumeRole
-      Path: /
-      Policies:
-        - PolicyName: !Sub "${ProjectName}-${Environment}-autoscaling"
-          PolicyDocument:
-            Statement:
-              - Effect: Allow
-                Action:
-                  - application-autoscaling:*
-                  - cloudwatch:DescribeAlarms
-                  - cloudwatch:PutMetricAlarm
-                  - ecs:DescribeServices
-                  - ecs:UpdateService
-                Resource: "*"
 
   # --------------------------------------------
   # IAM Policy
@@ -353,11 +318,27 @@ Resources:
               - logs:DescribeLogStreams
               - logs:PutLogEvents
             Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:*
-  # ECS Auto Scaling for ECS Service
+
+  # ------------------------------------------------------------#
+  #  Auto Scaling Service
+  # ------------------------------------------------------------#
+  ServiceScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MinCapacity: 1
+      MaxCapacity: 4
+      ResourceId: !Sub
+        - service/${EcsClusterName}/${EcsDefaultServiceName}
+        - EcsClusterName: !Ref ECSCluster
+          EcsDefaultServiceName: !Sub "${ProjectName}-${Environment}-${ServiceName}"
+      RoleARN: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService"
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
   ServiceScaleOutPolicy:
     Type: AWS::ApplicationAutoScaling::ScalingPolicy
     Properties:
-      PolicyName: !Sub "${ProjectName}-${Environment}-${ECSService}-ScaleOutPolicy"
+      PolicyName: !Sub "${ECSService}-ScaleOutPolicy"
       PolicyType: StepScaling
       ScalingTargetId: !Ref ServiceScalingTarget
       StepScalingPolicyConfiguration:
@@ -371,7 +352,7 @@ Resources:
   ServiceScaleInPolicy:
     Type: AWS::ApplicationAutoScaling::ScalingPolicy
     Properties:
-      PolicyName: !Sub "${ProjectName}-${Environment}-${ECSService}-ScaleInPolicy"
+      PolicyName: !Sub "${ECSService}-ScaleInPolicy"
       PolicyType: StepScaling
       ScalingTargetId: !Ref ServiceScalingTarget
       StepScalingPolicyConfiguration:
@@ -381,3 +362,46 @@ Resources:
         StepAdjustments:
           - ScalingAdjustment: -1
             MetricIntervalUpperBound: 0
+
+  # CloudWatch Alarms
+  ServiceScaleOutAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ECSService}-ScaleOutAlarm"
+      EvaluationPeriods: 1
+      Statistic: Average
+      TreatMissingData: notBreaching
+      Threshold: 10
+      AlarmDescription: Alarm to add capacity if CPU is high
+      Period: 60
+      AlarmActions:
+        - !Ref ServiceScaleOutPolicy
+      Namespace: AWS/ECS
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+        - Name: ServiceName
+          Value: !Ref ECSService
+      ComparisonOperator: GreaterThanThreshold
+      MetricName: CPUUtilization
+
+  ServiceScaleInAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ECSService}-ScaleInAlarm"
+      EvaluationPeriods: 1
+      Statistic: Average
+      TreatMissingData: notBreaching
+      Threshold: 5
+      AlarmDescription: Alarm to reduce capacity if container CPU is low
+      Period: 300
+      AlarmActions:
+        - !Ref ServiceScaleInPolicy
+      Namespace: AWS/ECS
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+        - Name: ServiceName
+          Value: !Sub "${ECSService}"
+      ComparisonOperator: LessThanThreshold
+      MetricName: CPUUtilization
